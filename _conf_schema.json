@@ -1,0 +1,66 @@
+{
+  "output_format": {
+    "type": "string",
+    "description": "动图输出格式：GIF / APNG / WEBP",
+    "enum": [
+      "GIF",
+      "APNG",
+      "WEBP"
+    ],
+    "default": "GIF"
+  },
+  "default_scale": {
+    "type": "float",
+    "description": "视频转GIF默认缩放(0.1-1.0)",
+    "default": 0.3
+  },
+  "default_fps": {
+    "type": "int",
+    "description": "视频转GIF默认帧率",
+    "default": 10
+  },
+  "max_gif_duration": {
+    "type": "float",
+    "description": "截取视频最大时长(秒)",
+    "default": 10.0
+  },
+  "max_video_size_mb": {
+    "type": "float",
+    "description": "允许处理的视频最大体积(MB)",
+    "default": 50.0
+  },
+  "max_download_size_mb": {
+    "type": "float",
+    "description": "下载最大体积(MB)",
+    "default": 50.0
+  },
+  "gif_max_colors": {
+    "type": "int",
+    "description": "GIF最大颜色数(2-256)",
+    "default": 256
+  },
+  "crop_output_format": {
+    "type": "string",
+    "description": "自动裁切输出格式",
+    "options": [
+      "PNG",
+      "JPEG"
+    ],
+    "default": "PNG"
+  },
+  "max_concurrent_tasks": {
+    "type": "int",
+    "description": "最大并发任务数",
+    "default": 2
+  },
+  "task_timeout_sec": {
+    "type": "float",
+    "description": "单任务超时(秒)",
+    "default": 120.0
+  },
+  "max_queue_waiting": {
+    "type": "int",
+    "description": "排队上限",
+    "default": 8
+  }
+}
