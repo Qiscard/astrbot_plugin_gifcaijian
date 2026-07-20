@@ -11,6 +11,8 @@ import io
 import os
 import re
 import tempfile
+import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -26,11 +28,10 @@ from .core.media_io import MediaHelper
 from .core.processors import Processors
 from .core.task_queue import TaskQueue
 
-PLUGIN_VERSION = "1.7.0"
+PLUGIN_VERSION = "1.7.1"
 ORIGINAL_AUTHOR = "shskjw"
 CURRENT_AUTHOR = "Qiscard"
 REPO_URL = "https://github.com/Qiscard/astrbot_plugin_gifcaijian"
-
 
 @register(
     "astrbot_plugin_gifcaijian",
@@ -58,7 +59,7 @@ class SpriteToGifPlugin(Star):
         )
 
     async def terminate(self):
-        pass
+        self._cleanup_tmp(max_age_sec=0)
 
     # ------------------------------------------------------------------
     # helpers
@@ -73,13 +74,50 @@ class SpriteToGifPlugin(Star):
                     parts.append(seg.text)
         return " ".join(parts)
 
-    def _img_from_bytes(self, data: bytes, suffix: str = "out.gif"):
+    def _tmp_dir(self) -> Path:
+        d = Path(tempfile.gettempdir()) / "astrbot_gifcaijian"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _cleanup_tmp(self, max_age_sec: int = 3600, max_files: int = 200) -> None:
+        """清理过期/过多临时文件，避免堆积与并发覆盖。"""
         try:
-            tmp_dir = Path(tempfile.gettempdir()) / "astrbot_gifcaijian"
-            tmp_dir.mkdir(parents=True, exist_ok=True)
-            p = tmp_dir / suffix
-            p.write_bytes(data)
-            return Comp.Image.fromFileSystem(str(p))
+            tmp_dir = self._tmp_dir()
+            now = time.time()
+            files = [f for f in tmp_dir.iterdir() if f.is_file()]
+            for f in files:
+                try:
+                    if max_age_sec <= 0 or now - f.stat().st_mtime > max_age_sec:
+                        f.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            files = [f for f in tmp_dir.iterdir() if f.is_file()]
+            if len(files) > max_files:
+                files.sort(key=lambda x: x.stat().st_mtime)
+                for f in files[: max(0, len(files) - max_files)]:
+                    try:
+                        f.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+
+    def _img_from_bytes(self, data: bytes, suffix: str = "out.gif"):
+        """写出唯一临时文件再投递；失败回退 fromBytes。
+
+        固定文件名会在并发/多次变速时互相覆盖，导致发出错图或旧缓存。
+        """
+        try:
+            self._cleanup_tmp()
+            name = suffix if suffix.startswith(".") else suffix
+            if "." not in Path(name).name:
+                name = f"{name}.gif"
+            stem = Path(name).stem or "out"
+            ext = Path(name).suffix.lstrip(".") or "gif"
+            unique = f"{stem}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}.{ext}"
+            path = self._tmp_dir() / unique
+            path.write_bytes(data)
+            return Comp.Image.fromFileSystem(str(path))
         except Exception:
             return Comp.Image.fromBytes(data)
 
@@ -390,7 +428,7 @@ max_concurrent_tasks={self.cfg.max_concurrent_tasks} task_timeout_sec={self.cfg.
                     pass
 
         if gif_bytes:
-            yield event.chain_result([Comp.Plain(result_msg), Comp.Image.fromBytes(gif_bytes.getvalue())])
+            yield event.chain_result([Comp.Plain(result_msg), self._img_from_bytes(gif_bytes.getvalue(), "video.gif")])
         else:
             yield event.plain_result(result_msg)
 
@@ -445,7 +483,7 @@ max_concurrent_tasks={self.cfg.max_concurrent_tasks} task_timeout_sec={self.cfg.
 
         if gif_bytes:
             yield event.chain_result(
-                [Comp.Plain(res_msg + crop_msg), Comp.Image.fromBytes(gif_bytes.getvalue())]
+                [Comp.Plain(res_msg + crop_msg), self._img_from_bytes(gif_bytes.getvalue(), "sprite.gif")]
             )
         else:
             yield event.plain_result(res_msg + crop_msg)
@@ -511,16 +549,6 @@ max_concurrent_tasks={self.cfg.max_concurrent_tasks} task_timeout_sec={self.cfg.
         """兼容无斜杠写法。"""
         async for r in self._change_speed_impl(event, False, factor):
             yield r
-
-    # 兼容旧指令提示
-    @filter.command("加速")
-    async def accelerate_gif_legacy(self, event: AstrMessageEvent):
-        yield event.plain_result("⚠️ 指令已更名，请使用: /g加速 [倍数]\n示例: /g加速 1.5")
-
-    @filter.command("减速")
-    async def decelerate_gif_legacy(self, event: AstrMessageEvent):
-        yield event.plain_result("⚠️ 指令已更名，请使用: /g减速 [倍数]\n示例: /g减速 2")
-
     @filter.command("gif分解")
     async def decompose_gif(self, event: AstrMessageEvent):
         yield event.plain_result("⏳ GIF分解中...")
@@ -585,7 +613,7 @@ max_concurrent_tasks={self.cfg.max_concurrent_tasks} task_timeout_sec={self.cfg.
             yield event.chain_result(
                 [
                     Comp.Plain(f"{res_msg}\n画布适应最大尺寸，自动居中填充"),
-                    Comp.Image.fromBytes(gif_io.getvalue()),
+                    self._img_from_bytes(gif_io.getvalue(), "multi.gif"),
                 ]
             )
         else:

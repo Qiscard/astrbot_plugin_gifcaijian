@@ -2,7 +2,7 @@ name: astrbot_plugin_gifcaijian
 display_name: GIF工具箱
 desc: 视频转GIF、智能网格裁剪、精灵图合成、变速分解等（原作者 shskjw，维护 Qiscard）
 help: 发送 gif帮助 查看指令
-version: v1.7.0
+version: v1.7.1
 author: Qiscard
 original_author: shskjw
 repo: https://github.com/Qiscard/astrbot_plugin_gifcaijian

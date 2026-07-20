@@ -232,19 +232,114 @@ class Processors:
 
 
     def process_speed(self, img_data: bytes, ratio: float):
+        """按 ratio 缩放帧时长（ratio<1 加速，>1 减速）。
+
+        修复多次变速后帧率异常的根因：
+        1) 旧逻辑 max(10, int(dur*ratio)) 会把加速结果钉死在 10ms，再加速无效、节奏失真；
+        2) palette 帧浅拷贝 + optimize 重编码易丢 disposal/时长；
+        3) GIF 标准延迟粒度为 10ms（1/100s），亚 10ms 目标通过均匀抽帧表达，避免假帧率。
+        """
         try:
             img = PILImage.open(io.BytesIO(img_data))
-            if not getattr(img, "is_animated", False): 
+            if not getattr(img, "is_animated", False):
                 return "这不是GIF", None
-            frames, durs = [], []
+
+            ratio = float(ratio)
+            if ratio <= 0:
+                return "❌ 变速倍率无效", None
+
+            default_dur = int(img.info.get("duration", 100) or 100)
+            if default_dur <= 0:
+                default_dur = 100
+
+            src_frames: List[PILImage.Image] = []
+            raw_durs: List[int] = []
+            loop = img.info.get("loop", 0)
+            try:
+                loop = int(loop)
+            except (TypeError, ValueError):
+                loop = 0
+
             for frame in ImageSequence.Iterator(img):
-                durs.append(max(10, int(frame.info.get('duration', 100) * ratio)))
-                frames.append(frame.copy())
+                raw = frame.info.get("duration", default_dur)
+                try:
+                    raw = int(raw)
+                except (TypeError, ValueError):
+                    raw = default_dur
+                if raw <= 0:
+                    raw = default_dur
+                # GIF 读回通常已是 10ms 倍数；规整到 >=10ms 的 10ms 网格，保证多轮可逆
+                raw = max(10, int(round(raw / 10.0)) * 10)
+                raw_durs.append(raw)
+                src_frames.append(frame.convert("RGBA").copy())
+
+            if not src_frames:
+                return "❌ 无法读取GIF帧", None
+
+            targets = [d * ratio for d in raw_durs]
+            out_frames: List[PILImage.Image] = []
+            out_durs: List[int] = []
+
+            def _snap_ms(ms: float) -> int:
+                """落到 GIF 可用的 10ms 网格，范围 10ms~60s。"""
+                v = int(round(float(ms) / 10.0)) * 10
+                return max(10, min(v, 60000))
+
+            if ratio < 1.0:
+                # 加速：目标间隔 <10ms 时均匀合并/抽帧，用更少帧 + >=10ms 间隔表达更快节奏
+                i = 0
+                n = len(src_frames)
+                while i < n:
+                    acc = targets[i]
+                    last = i
+                    i += 1
+                    while i < n and acc < 10.0:
+                        acc += targets[i]
+                        last = i
+                        i += 1
+                    out_frames.append(src_frames[last])
+                    out_durs.append(_snap_ms(acc))
+            else:
+                # 减速或 1x：只拉长间隔，不插帧
+                for fr, td in zip(src_frames, targets):
+                    out_frames.append(fr)
+                    out_durs.append(_snap_ms(td))
+
+            if not out_frames:
+                return "❌ 变速后无有效帧", None
+
             output = io.BytesIO()
-            frames[0].save(output, format='GIF', save_all=True, append_images=frames[1:],
-                           duration=durs, loop=0, disposal=2, optimize=True)
+            # optimize=False，避免 Pillow 合并帧导致 duration 列表错位
+            out_frames[0].save(
+                output,
+                format="GIF",
+                save_all=True,
+                append_images=out_frames[1:],
+                duration=out_durs,
+                loop=loop,
+                disposal=2,
+                optimize=False,
+            )
             output.seek(0)
-            return "✅ 变速完成", output
+
+            avg_in = sum(raw_durs) / len(raw_durs)
+            avg_out = sum(out_durs) / len(out_durs)
+            total_in_s = sum(raw_durs) / 1000.0
+            total_out_s = sum(out_durs) / 1000.0
+            fps_in = 1000.0 / avg_in if avg_in > 0 else 0.0
+            fps_out = 1000.0 / avg_out if avg_out > 0 else 0.0
+            drop_note = ""
+            if len(out_frames) != len(src_frames):
+                drop_note = f"\n抽帧: {len(src_frames)} → {len(out_frames)}（GIF最小间隔10ms）"
+            msg = (
+                f"✅ 变速完成\n"
+                f"帧数: {len(src_frames)} → {len(out_frames)} | "
+                f"总时长: {total_in_s:.2f}s → {total_out_s:.2f}s\n"
+                f"平均帧间隔: {avg_in:.0f}ms → {avg_out:.0f}ms\n"
+                f"等效FPS: {fps_in:.2f} → {fps_out:.2f}"
+                f"{drop_note}"
+            )
+            return msg, output
         except Exception as e:
             return f"异常: {e}", None
 
