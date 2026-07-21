@@ -28,7 +28,7 @@ from .core.media_io import MediaHelper
 from .core.processors import Processors
 from .core.task_queue import TaskQueue
 
-PLUGIN_VERSION = "1.7.1"
+PLUGIN_VERSION = "1.7.2"
 ORIGINAL_AUTHOR = "shskjw"
 CURRENT_AUTHOR = "Qiscard"
 REPO_URL = "https://github.com/Qiscard/astrbot_plugin_gifcaijian"

@@ -232,12 +232,18 @@ class Processors:
 
 
     def process_speed(self, img_data: bytes, ratio: float):
-        """按 ratio 缩放帧时长（ratio<1 加速，>1 减速）。
+        """按 ratio 改变播放速度（ratio<1 加速，ratio>1 减速）。
 
-        修复多次变速后帧率异常的根因：
-        1) 旧逻辑 max(10, int(dur*ratio)) 会把加速结果钉死在 10ms，再加速无效、节奏失真；
-        2) palette 帧浅拷贝 + optimize 重编码易丢 disposal/时长；
-        3) GIF 标准延迟粒度为 10ms（1/100s），亚 10ms 目标通过均匀抽帧表达，避免假帧率。
+        QQ 客户端已知问题：
+        - GCE delay=1~2（10~20ms）常被当成约 100ms，造成「预览极慢/卡顿」；
+        - 在线预览与下载后本地播放器表现不一致；
+        - 末帧塞超长 duration 会在 QQ 里拖成慢动作。
+
+        兼容策略：
+        - 输出每帧 delay >= 50ms，且为 10ms 整数倍；
+        - 以总时长 * ratio 为目标，加速优先均匀抽帧，减速只拉长间隔；
+        - 时长在各帧间均匀分摊，禁止把残余全堆到末帧；
+        - RGB 帧 + disposal=2 + optimize=False，避免二次编码串帧。
         """
         try:
             img = PILImage.open(io.BytesIO(img_data))
@@ -247,6 +253,9 @@ class Processors:
             ratio = float(ratio)
             if ratio <= 0:
                 return "❌ 变速倍率无效", None
+
+            MIN_MS = 50   # QQ 较稳的最小帧间隔
+            GRID = 10     # GIF 原生 1/100s
 
             default_dur = int(img.info.get("duration", 100) or 100)
             if default_dur <= 0:
@@ -260,6 +269,8 @@ class Processors:
             except (TypeError, ValueError):
                 loop = 0
 
+            # 逐帧合成，避免 partial-frame GIF 抽到透明碎片
+            canvas = PILImage.new("RGBA", img.size, (0, 0, 0, 0))
             for frame in ImageSequence.Iterator(img):
                 raw = frame.info.get("duration", default_dur)
                 try:
@@ -268,76 +279,138 @@ class Processors:
                     raw = default_dur
                 if raw <= 0:
                     raw = default_dur
-                # GIF 读回通常已是 10ms 倍数；规整到 >=10ms 的 10ms 网格，保证多轮可逆
-                raw = max(10, int(round(raw / 10.0)) * 10)
+                raw = max(GRID, int(round(raw / GRID)) * GRID)
                 raw_durs.append(raw)
-                src_frames.append(frame.convert("RGBA").copy())
 
-            if not src_frames:
+                fr = frame.convert("RGBA")
+                # 按帧尺寸贴到画布（兼容局部更新帧）
+                if fr.size != canvas.size:
+                    layer = PILImage.new("RGBA", canvas.size, (0, 0, 0, 0))
+                    layer.paste(fr, (0, 0), fr)
+                    fr = layer
+                disposal = frame.info.get("disposal", 2)
+                prev = canvas.copy()
+                canvas.paste(fr, (0, 0), fr)
+                src_frames.append(canvas.convert("RGB"))
+                # disposal 2: restore background; 1/0: keep
+                if disposal == 2:
+                    canvas = PILImage.new("RGBA", img.size, (0, 0, 0, 0))
+                elif disposal == 3:
+                    canvas = prev
+
+            n = len(src_frames)
+            if n == 0:
                 return "❌ 无法读取GIF帧", None
 
-            targets = [d * ratio for d in raw_durs]
-            out_frames: List[PILImage.Image] = []
-            out_durs: List[int] = []
+            total_in = float(sum(raw_durs))
+            target_total = max(float(MIN_MS), total_in * ratio)
 
-            def _snap_ms(ms: float) -> int:
-                """落到 GIF 可用的 10ms 网格，范围 10ms~60s。"""
-                v = int(round(float(ms) / 10.0)) * 10
-                return max(10, min(v, 60000))
+            def _even_durs(count: int, total_ms: float) -> List[int]:
+                """均匀分配时长，每帧 >= MIN_MS，且为 GRID 倍数。"""
+                count = max(1, count)
+                min_total = count * MIN_MS
+                total_i = int(round(float(total_ms) / GRID)) * GRID
+                total_i = max(min_total, total_i)
+                base = total_i // count
+                base = max(MIN_MS, int(base // GRID) * GRID)
+                durs = [base] * count
+                # 把差额按 GRID 均匀洒到各帧，避免末帧异常长
+                rem = (total_i - sum(durs)) // GRID
+                i = 0
+                guard = 0
+                while rem != 0 and guard < count * 200:
+                    guard += 1
+                    idx = i % count
+                    if rem > 0:
+                        durs[idx] += GRID
+                        rem -= 1
+                    else:
+                        if durs[idx] - GRID >= MIN_MS:
+                            durs[idx] -= GRID
+                            rem += 1
+                    i += 1
+                return durs
+
+            def _sample_indices(src_n: int, out_n: int) -> List[int]:
+                if out_n <= 1:
+                    return [0]
+                if out_n >= src_n:
+                    return list(range(src_n))
+                raw_idx = [
+                    int(round(i * (src_n - 1) / (out_n - 1)))
+                    for i in range(out_n)
+                ]
+                # 去重并保持顺序；不足则线性补齐
+                out: List[int] = []
+                seen = set()
+                for idx in raw_idx:
+                    idx = max(0, min(src_n - 1, idx))
+                    if idx not in seen:
+                        out.append(idx)
+                        seen.add(idx)
+                if len(out) < out_n:
+                    for idx in range(src_n):
+                        if idx not in seen:
+                            out.append(idx)
+                            seen.add(idx)
+                            if len(out) >= out_n:
+                                break
+                    out.sort()
+                return out[:out_n]
 
             if ratio < 1.0:
-                # 加速：目标间隔 <10ms 时均匀合并/抽帧，用更少帧 + >=10ms 间隔表达更快节奏
-                i = 0
-                n = len(src_frames)
-                while i < n:
-                    acc = targets[i]
-                    last = i
-                    i += 1
-                    while i < n and acc < 10.0:
-                        acc += targets[i]
-                        last = i
-                        i += 1
-                    out_frames.append(src_frames[last])
-                    out_durs.append(_snap_ms(acc))
+                # 先尝试保留全部帧，仅缩短间隔
+                simple = [
+                    max(MIN_MS, int(round(d * ratio / GRID)) * GRID)
+                    for d in raw_durs
+                ]
+                simple_total = float(sum(simple))
+                # 若因 MIN_MS 钳位导致“加速不明显”（总时长明显长于目标），则抽帧
+                if simple_total <= target_total * 1.12:
+                    indices = list(range(n))
+                    out_durs = _even_durs(n, target_total)
+                else:
+                    out_n = max(1, int(round(target_total / MIN_MS)))
+                    out_n = min(n, max(1, out_n))
+                    indices = _sample_indices(n, out_n)
+                    out_durs = _even_durs(len(indices), target_total)
             else:
-                # 减速或 1x：只拉长间隔，不插帧
-                for fr, td in zip(src_frames, targets):
-                    out_frames.append(fr)
-                    out_durs.append(_snap_ms(td))
+                # 减速：保留全部帧，拉长间隔
+                indices = list(range(n))
+                out_durs = _even_durs(n, target_total)
 
-            if not out_frames:
-                return "❌ 变速后无有效帧", None
-
+            out_rgb = [src_frames[i] for i in indices]
+            # 交给 Pillow 写 GIF（自动量化）；不用 RGBA 大图，减小 QQ 预览压力
             output = io.BytesIO()
-            # optimize=False，避免 Pillow 合并帧导致 duration 列表错位
-            out_frames[0].save(
+            out_rgb[0].save(
                 output,
                 format="GIF",
                 save_all=True,
-                append_images=out_frames[1:],
+                append_images=out_rgb[1:],
                 duration=out_durs,
-                loop=loop,
+                loop=0 if loop is None else loop,
                 disposal=2,
                 optimize=False,
             )
             output.seek(0)
 
-            avg_in = sum(raw_durs) / len(raw_durs)
-            avg_out = sum(out_durs) / len(out_durs)
-            total_in_s = sum(raw_durs) / 1000.0
-            total_out_s = sum(out_durs) / 1000.0
+            total_out = float(sum(out_durs))
+            out_n = len(out_durs)
+            avg_in = total_in / n
+            avg_out = total_out / out_n
             fps_in = 1000.0 / avg_in if avg_in > 0 else 0.0
             fps_out = 1000.0 / avg_out if avg_out > 0 else 0.0
-            drop_note = ""
-            if len(out_frames) != len(src_frames):
-                drop_note = f"\n抽帧: {len(src_frames)} → {len(out_frames)}（GIF最小间隔10ms）"
+            speed_x = total_in / total_out if total_out > 0 else 0.0
+            note = ""
+            if out_n != n:
+                note = f"\n抽帧: {n} → {out_n}（QQ兼容最小间隔{MIN_MS}ms）"
             msg = (
                 f"✅ 变速完成\n"
-                f"帧数: {len(src_frames)} → {len(out_frames)} | "
-                f"总时长: {total_in_s:.2f}s → {total_out_s:.2f}s\n"
+                f"帧数: {n} → {out_n} | "
+                f"总时长: {total_in/1000.0:.2f}s → {total_out/1000.0:.2f}s\n"
                 f"平均帧间隔: {avg_in:.0f}ms → {avg_out:.0f}ms\n"
-                f"等效FPS: {fps_in:.2f} → {fps_out:.2f}"
-                f"{drop_note}"
+                f"等效FPS: {fps_in:.2f} → {fps_out:.2f} | 实际约 {speed_x:.2f}x"
+                f"{note}"
             )
             return msg, output
         except Exception as e:
