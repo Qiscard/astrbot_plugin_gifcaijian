@@ -16,7 +16,7 @@
   },
   "default_fps": {
     "type": "int",
-    "description": "视频转GIF默认帧率",
+    "description": "视频转GIF默认采样参数(内部fps)",
     "default": 10
   },
   "max_gif_duration": {

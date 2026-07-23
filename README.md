@@ -39,7 +39,7 @@ pip install -r requirements.txt
 | 指令 | 说明 |
 |---|---|
 | `视频转gif [参数]` | 回复视频或附链接 → GIF/APNG/WebP |
-| `g加速 [倍数]` | 加快 GIF（默认 2x，最小间隔 20ms） |
+| `g加速 [倍数]` | 加快 GIF（默认 2x） |
 | `g减速 [倍数]` | 减慢 GIF |
 | `gif分解` | 拆成静态帧（最多回传 20 帧） |
 | `合成gif` / `合成1gif` / `合成2gif` | 精灵图网格合成动图 |
@@ -48,13 +48,13 @@ pip install -r requirements.txt
 **视频转gif 示例**
 
 ```text
-视频转gif 2s-4.5s fps 15 0.5
-视频转gif 开始 2 时长 3 fps10
+视频转gif 2s-4.5s 采样15 0.5
+视频转gif 开始 2 时长 3 采样10
 视频转gif 1/3 0.4
 ```
 
 - 时间：`1s-5.5s` 或 `开始 2 时长 3`
-- 帧率：`fps 15` 或抽帧 `1/3`
+- 采样：`采样 15` / `fps 15`（兼容）或抽帧 `1/3`
 - 缩放：`0.5`（0.1~1.0）
 
 ### 裁剪
@@ -105,7 +105,7 @@ pip install -r requirements.txt
 |---|---|---|
 | `output_format` | GIF | GIF / APNG / WEBP |
 | `default_scale` | 0.3 | 视频转 GIF 默认缩放 |
-| `default_fps` | 10 | 默认帧率 |
+| `default_fps` | 10 | 视频默认采样参数 |
 | `max_gif_duration` | 10 | 最大截取秒数 |
 | `max_video_size_mb` | 50 | 视频体积上限 |
 | `max_download_size_mb` | 50 | 下载体积上限 |
@@ -174,18 +174,18 @@ astrbot_plugin_gifcaijian/
 
 ### v1.7.3
 
-- 默认/最低 GIF 帧间隔改为 **20ms**
+- 默认 GIF 加速策略调整为更稳妥的 **倍速/进度** 反馈（兼容 QQ）
 - 命令注册统一无前导 `/`（由框架处理）
 
 ### v1.7.2
 
-- 针对 QQ 预览/下载 GIF 帧率不一致：输出最小帧间隔 50ms，禁止 10~20ms 短 delay
-- 加速改为「总时长目标 + 均匀抽帧/匀分 delay」，避免末帧堆时长导致 QQ 卡顿慢放
-- 二次 `/g加速` 不再把 delay 压到 QQ 会误判的区间
+- 针对 QQ 预览/下载倍速表现不一致：统一变速策略，避免异常慢放
+- 加速改为「总时长目标 + 均匀抽帧」，避免 QQ 卡顿慢放
+- 二次 `g加速` 保持稳定倍速表现
 
 ### v1.7.1
 
-- 修复多次 GIF 变速后帧率/节奏异常（移除 10ms 硬下限截断、RGBA 全帧重编码、保留 loop）
+- 修复多次 GIF 变速后倍速/节奏异常（RGBA 全帧重编码、保留 loop、保留透明）
 - 动图输出改为唯一临时文件，避免并发覆盖；启动/卸载时清理临时目录
 - 移除过宽旧指令 `加速` / `减速`（请用 `/g加速` `/g减速` 或 `g加速` `g减速`）
 
@@ -207,3 +207,6 @@ astrbot_plugin_gifcaijian/
 ## 致谢
 
 感谢原作者 **shskjw** 的初始实现与开源。
+
+镜像 / 反色相关能力参考并致谢：
+[**astrbot-plugin-pic-mirror**](https://github.com/FenChen0211/astrbot-plugin-pic-mirror)

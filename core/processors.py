@@ -66,7 +66,7 @@ class Processors:
                 params['force_step'] = True
             text = text.replace(step_match.group(0), " ")
         else:
-            fps_match = re.search(r'(?:fps|帧率)\s*(\d+)', text)
+            fps_match = re.search(r'(?:fps|帧率|采样)\s*(\d+)', text)
             if fps_match: 
                 params['fps'] = int(fps_match.group(1))
 
@@ -142,7 +142,7 @@ class Processors:
             save_animation(self.cfg, output, frames, duration_ms, loop=0)
             output.seek(0)
             size_mb = output.getbuffer().nbytes / 1024 / 1024
-            info = f"时间:{start_t}-{end_t:.1f}s {warn_msg}\n格式:{output_fmt} | FPS:{target_fps:.1f}\n缩放:{params['scale']} | 体积:{size_mb:.2f}MB"
+            info = f"处理进度: 完成\n时间:{start_t}-{end_t:.1f}s {warn_msg}\n格式:{output_fmt}\n缩放:{params['scale']} | 体积:{size_mb:.2f}MB"
             return output, info, size_mb
         except Exception as e:
             return None, f"内部错误: {repr(e)}", 0
@@ -452,21 +452,16 @@ class Processors:
 
             total_out = float(sum(out_durs))
             out_n = len(out_durs)
-            avg_in = total_in / n
-            avg_out = total_out / out_n
-            fps_in = 1000.0 / avg_in if avg_in > 0 else 0.0
-            fps_out = 1000.0 / avg_out if avg_out > 0 else 0.0
             speed_x = total_in / total_out if total_out > 0 else 0.0
             note = ""
             if out_n != n:
-                note = f"\n抽帧: {n} → {out_n}（最小间隔{MIN_MS}ms）"
+                note = f"\n抽帧: {n} → {out_n}"
             alpha_note = " | 保留透明" if has_alpha else ""
             msg = (
                 f"✅ 变速完成\n"
-                f"帧数: {n} → {out_n} | "
-                f"总时长: {total_in/1000.0:.2f}s → {total_out/1000.0:.2f}s\n"
-                f"平均帧间隔: {avg_in:.0f}ms → {avg_out:.0f}ms\n"
-                f"等效FPS: {fps_in:.2f} → {fps_out:.2f} | 实际约 {speed_x:.2f}x | 最小间隔{MIN_MS}ms"
+                f"处理进度: 完成\n"
+                f"倍速: 约 {speed_x:.2f}x\n"
+                f"时长: {total_in/1000.0:.2f}s → {total_out/1000.0:.2f}s"
                 f"{alpha_note}{note}"
             )
             return msg, output

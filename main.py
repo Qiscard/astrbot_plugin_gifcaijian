@@ -135,11 +135,11 @@ class SpriteToGifPlugin(Star):
 输出: {fmt} | 队列: {self.queue.status_text}
 
 ━━━ 🎬 动图 ━━━
-• 视频转gif [开始/时长/fps/缩放]
+• 视频转gif [开始/时长/采样/缩放]
 • g加速 [倍数]  /  g减速 [倍数]
 • gif分解
 • 合成gif / 合成1gif / 合成2gif [行]x[列] [间隔] [边距]
-• 多图合成gif [帧间隔秒]
+• 多图合成gif [间隔秒]
 
 ━━━ ✂️ 裁剪 ━━━
 • 自动裁切 [阈值] [模式] [降噪N]
@@ -155,7 +155,7 @@ class SpriteToGifPlugin(Star):
 
 ━━━ ⚙️ 配置 ━━━
 output_format={fmt} max_gif_duration={self.cfg.max_gif_duration}s
-default_scale={self.cfg.default_scale} default_fps={self.cfg.default_fps}
+default_scale={self.cfg.default_scale} 处理参数见配置面板
 max_concurrent_tasks={self.cfg.max_concurrent_tasks} task_timeout_sec={self.cfg.task_timeout_sec}
 
 💡 多数指令需回复图片/视频
@@ -529,7 +529,7 @@ max_concurrent_tasks={self.cfg.max_concurrent_tasks} task_timeout_sec={self.cfg.
         except (TypeError, ValueError):
             min_ms = 20
         min_ms = int(round(min_ms / 10.0)) * 10 or 10
-        yield event.plain_result(f"⏳ GIF{action} {factor}x (最小间隔{min_ms}ms) ...")
+        yield event.plain_result(f"⏳ 处理进度: GIF{action}中（目标倍速 {factor}x）...")
         try:
             img_data = await self._run_task("download_image", lambda: self.media._resolve_image_bytes(event), timeout=60)
             if not img_data:
@@ -556,7 +556,7 @@ max_concurrent_tasks={self.cfg.max_concurrent_tasks} task_timeout_sec={self.cfg.
 
     @filter.command("g加速")
     async def accelerate_gif(self, event: AstrMessageEvent, factor: float = 2.0):
-        """GIF 加速（默认最小帧间隔 20ms）。"""
+        """GIF 加速（默认倍速 2x）。"""
         async for r in self._change_speed_impl(event, True, factor):
             yield r
 
