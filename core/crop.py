@@ -11,6 +11,7 @@ from astrbot.api import logger
 
 from .config_helpers import Cfg
 from .deps import np, has_numpy
+from .safety import SafetyError, compress_image, open_image_checked
 
 
 class CropEngine:
@@ -114,7 +115,11 @@ class CropEngine:
                           denoise: int = 3, min_crop_ratio: float = 0.90) -> tuple:
         """自动裁切工作线程"""
         try:
-            img = PILImage.open(io.BytesIO(img_data))
+            try:
+                img = open_image_checked(img_data, self.cfg)
+            except SafetyError as e:
+                return None, f"❌ {e}"
+            img, _ = compress_image(img, self.cfg)
             original_w, original_h = img.size
 
             # 执行自动检测（带降噪）
@@ -190,13 +195,19 @@ class CropEngine:
 
 
     def _crop_image_data(self, img_data: bytes, margins: dict) -> tuple[bytes, str]:
-        if all(v == 0 for v in margins.values()): 
+        if all(v == 0 for v in margins.values()):
             return img_data, ""
         try:
-            img = PILImage.open(io.BytesIO(img_data)).convert("RGBA")
+            try:
+                img = open_image_checked(img_data, self.cfg)
+            except SafetyError as e:
+                return img_data, f"\n❌ {e}"
+            img, _ = compress_image(img, self.cfg)
+            if img.mode != "RGBA":
+                img = img.convert("RGBA")
             w, h = img.size
             l, u, r, d = margins['left'], margins['top'], w - margins['right'], h - margins['bottom']
-            if l >= r or u >= d: 
+            if l >= r or u >= d:
                 return img_data, f"\n⚠️ 边距无效: {w}x{h} -> {l},{u},{r},{d}"
             output = io.BytesIO()
             img.crop((l, u, r, d)).save(output, format='PNG')
@@ -204,15 +215,22 @@ class CropEngine:
         except Exception as e:
             return img_data, f"\n⚠️ 边距裁剪出错: {e}"
 
+
     # --- 网格裁剪功能 ---
 
     def _worker_crop_grid(self, img_data: bytes, margins: dict, rows: int, cols: int):
         img_data, crop_msg = self._crop_image_data(img_data, margins)
         try:
-            img = PILImage.open(io.BytesIO(img_data)).convert("RGBA")
+            try:
+                img = open_image_checked(img_data, self.cfg)
+            except SafetyError as e:
+                return f"❌ {e}", []
+            img, _ = compress_image(img, self.cfg)
+            if img.mode != "RGBA":
+                img = img.convert("RGBA")
             w, h = img.size
             cw, ch = w // cols, h // rows
-            if cw < 1 or ch < 1: 
+            if cw < 1 or ch < 1:
                 return f"❌ 图片太小 {crop_msg}", None
             res_list = []
             for r in range(rows):
@@ -223,6 +241,8 @@ class CropEngine:
             return crop_msg, res_list
         except Exception as e:
             return f"❌ 出错: {e}", None
+
+
 
 
     def _build_content_mask(self, img: PILImage.Image, threshold: int = 248):
@@ -765,7 +785,13 @@ class CropEngine:
         try:
             margins = margins or {"top": 0, "bottom": 0, "left": 0, "right": 0}
             processed, crop_msg = self._crop_image_data(img_data, margins)
-            img = PILImage.open(io.BytesIO(processed)).convert("RGBA")
+            try:
+                img = open_image_checked(processed, self.cfg)
+            except SafetyError as e:
+                return f"❌ {e}", None, ""
+            img, _ = compress_image(img, self.cfg)
+            if img.mode != "RGBA":
+                img = img.convert("RGBA")
             w, h = img.size
             if rows < 1 or cols < 1 or rows * cols > 100:
                 return "❌ 行列不合法", None, ""

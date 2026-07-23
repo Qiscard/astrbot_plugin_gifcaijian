@@ -13,6 +13,7 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.core.utils.io import download_image_by_url, download_file as astrbot_download_file
 
 from .config_helpers import Cfg
+from .safety import SafetyError, check_raw_bytes, sniff_kind_from_bytes
 
 
 class MediaHelper:
@@ -193,7 +194,7 @@ class MediaHelper:
         if not url.startswith(('http://', 'https://')):
             return None
 
-        max_size = int(self.cfg.get('max_download_size_mb', 50) * 1024 * 1024)
+        max_size = int(self.cfg.max_download_size_bytes)
         try:
             # download_image_by_url 返回本地临时文件路径
             local_path = await asyncio.wait_for(
@@ -208,11 +209,21 @@ class MediaHelper:
             if not local_path or not os.path.exists(local_path):
                 return None
             size = os.path.getsize(local_path)
-            if size > max_size:
-                logger.warning(f"下载文件过大: {size} > {max_size} - {url[:80]}")
+            # hard precheck / download ceiling
+            pre = int(self.cfg.precheck_file_size_bytes)
+            if size > pre or size > max_size:
+                logger.warning(f"下载文件过大: {size} > min(pre={pre}, max={max_size}) - {url[:80]}")
                 return None
             with open(local_path, 'rb') as f:
-                return f.read()
+                data = f.read()
+            # refine by sniffed type (gif vs image vs video)
+            try:
+                kind = sniff_kind_from_bytes(data)
+                check_raw_bytes(data, self.cfg, kind=kind if kind in ("gif", "video") else "image")
+            except SafetyError as e:
+                logger.warning(f"下载内容未通过体积校验: {e}")
+                return None
+            return data
         except Exception as e:
             logger.warning(f"读取下载文件失败: {e}")
             return None
@@ -272,13 +283,22 @@ class MediaHelper:
             return None
         try:
             path = await asyncio.wait_for(comp.convert_to_file_path(), timeout=180)
-            max_size = int(self.cfg.get('max_download_size_mb', 50) * 1024 * 1024)
+            max_size = int(self.cfg.max_download_size_bytes)
             if path and os.path.exists(path):
-                if os.path.getsize(path) > max_size:
-                    logger.warning(f"图片过大: {os.path.getsize(path)} > {max_size}")
+                size = os.path.getsize(path)
+                pre = int(self.cfg.precheck_file_size_bytes)
+                if size > pre or size > max_size:
+                    logger.warning(f"图片过大: {size} > min(pre={pre}, max={max_size})")
                     return None
                 with open(path, 'rb') as f:
-                    return f.read()
+                    data = f.read()
+                try:
+                    kind = sniff_kind_from_bytes(data)
+                    check_raw_bytes(data, self.cfg, kind="gif" if kind == "gif" else "image")
+                except SafetyError as e:
+                    logger.warning(f"协议端图片未通过体积校验: {e}")
+                    return None
+                return data
         except Exception as e:
             logger.warning(f"协议端解析图片失败: {e}")
         return None

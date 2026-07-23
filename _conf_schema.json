@@ -34,6 +34,46 @@
     "description": "下载最大体积(MB)",
     "default": 50.0
   },
+  "max_image_size_mb": {
+    "type": "float",
+    "description": "普通图片最大体积(MB)",
+    "default": 15.0
+  },
+  "max_gif_size_mb": {
+    "type": "float",
+    "description": "GIF最大体积(MB)",
+    "default": 20.0
+  },
+  "precheck_file_size_mb": {
+    "type": "float",
+    "description": "打开/解码前文件预检上限(MB)",
+    "default": 100.0
+  },
+  "max_gif_frames": {
+    "type": "int",
+    "description": "单个GIF允许处理的最大帧数",
+    "default": 200
+  },
+  "max_gif_total_pixels": {
+    "type": "int",
+    "description": "GIF总像素上限(帧数x单帧像素)",
+    "default": 16000000
+  },
+  "max_image_pixels": {
+    "type": "int",
+    "description": "单张静图最大像素数",
+    "default": 25000000
+  },
+  "enable_auto_compress": {
+    "type": "bool",
+    "description": "处理时自动压缩过大图片",
+    "default": true
+  },
+  "max_compress_dimension": {
+    "type": "int",
+    "description": "自动压缩时最长边像素上限",
+    "default": 2048
+  },
   "gif_max_colors": {
     "type": "int",
     "description": "GIF最大颜色数(2-256)",

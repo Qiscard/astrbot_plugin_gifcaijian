@@ -27,8 +27,9 @@ from .core.deps import has_imageio, warn_missing_deps
 from .core.media_io import MediaHelper
 from .core.processors import Processors
 from .core.task_queue import TaskQueue
+from .core.safety import SafetyError, check_file_path, check_raw_bytes, sniff_kind_from_bytes
 
-PLUGIN_VERSION = "1.7.3"
+PLUGIN_VERSION = "1.8.1"
 ORIGINAL_AUTHOR = "shskjw"
 CURRENT_AUTHOR = "Qiscard"
 REPO_URL = "https://github.com/Qiscard/astrbot_plugin_gifcaijian"
@@ -149,6 +150,8 @@ class SpriteToGifPlugin(Star):
 ━━━ 🎨 特效 ━━━
 • 图片转线稿
 • 表情包做旧 [次数]
+• 左对称 / 右对称 / 上对称 / 下对称
+• 反色
 
 ━━━ ⚙️ 配置 ━━━
 output_format={fmt} max_gif_duration={self.cfg.max_gif_duration}s
@@ -402,6 +405,12 @@ max_concurrent_tasks={self.cfg.max_concurrent_tasks} task_timeout_sec={self.cfg.
                     video_path = tmp_path
                 else:
                     video_path = resolved
+
+            try:
+                check_file_path(video_path, self.cfg, kind="video")
+            except SafetyError as e:
+                yield event.plain_result(f"❌ {e}")
+                return
 
             # duration guard
             if params.get("end") is not None:
@@ -663,6 +672,73 @@ max_concurrent_tasks={self.cfg.max_concurrent_tasks} task_timeout_sec={self.cfg.
             )
         else:
             yield event.plain_result(res_msg)
+
+
+    async def _mirror_impl(self, event: AstrMessageEvent, mode: str):
+        mode_names = {
+            "left_to_right": "左对称",
+            "right_to_left": "右对称",
+            "top_to_bottom": "上对称",
+            "bottom_to_top": "下对称",
+            "invert": "反色",
+        }
+        label = mode_names.get(mode, mode)
+        if not self.media._get_image_url(event) and self.media._get_first_image_component(event) is None:
+            yield event.plain_result(f"❌ 请发送或回复图片\n用法: {label}")
+            return
+        yield event.plain_result(f"⏳ {label}处理中...")
+        try:
+            img_data = await self._run_task(
+                "download_image",
+                lambda: self.media._resolve_image_bytes(event),
+                timeout=60,
+            )
+            if not img_data:
+                yield event.plain_result("❌ 图片下载失败")
+                return
+            res_msg, out_io, fmt = await self._run_cpu(
+                f"mirror_{mode}",
+                self.proc.process_mirror,
+                img_data,
+                mode,
+                timeout=90,
+            )
+        except Exception as e:
+            yield event.plain_result(f"❌ {e}")
+            return
+        if out_io:
+            data = out_io.getvalue()
+            suffix = "mirror.gif" if fmt == "gif" else "mirror.png"
+            yield event.chain_result(
+                [Comp.Plain(res_msg), self._img_from_bytes(data, suffix)]
+            )
+        else:
+            yield event.plain_result(res_msg)
+
+    @filter.command("左对称")
+    async def mirror_left(self, event: AstrMessageEvent):
+        async for r in self._mirror_impl(event, "left_to_right"):
+            yield r
+
+    @filter.command("右对称")
+    async def mirror_right(self, event: AstrMessageEvent):
+        async for r in self._mirror_impl(event, "right_to_left"):
+            yield r
+
+    @filter.command("上对称")
+    async def mirror_top(self, event: AstrMessageEvent):
+        async for r in self._mirror_impl(event, "top_to_bottom"):
+            yield r
+
+    @filter.command("下对称")
+    async def mirror_bottom(self, event: AstrMessageEvent):
+        async for r in self._mirror_impl(event, "bottom_to_top"):
+            yield r
+
+    @filter.command("反色")
+    async def mirror_invert(self, event: AstrMessageEvent):
+        async for r in self._mirror_impl(event, "invert"):
+            yield r
 
     @filter.command("批量去白边")
     async def batch_remove_white_border(self, event: AstrMessageEvent):

@@ -1,10 +1,10 @@
 # GIF工具箱 (`astrbot_plugin_gifcaijian`)
 
-AstrBot 动图 / 图片处理插件：视频转动图、精灵图合成、GIF 变速与分解、**智能网格裁剪**、自动去白边、线稿与表情包做旧。
+AstrBot 动图 / 图片处理插件：视频转动图、精灵图合成、GIF 变速与分解、**智能网格裁剪**、自动去白边、线稿与表情包做旧、**镜像对称与反色**。
 
 | 项 | 信息 |
 |---|---|
-| 版本 | **v1.7.3** |
+| 版本 | **v1.8.1** |
 | 维护 / 二次开发 | **Qiscard** |
 | 原作者 | **shskjw** |
 | 本仓库 | https://github.com/Qiscard/astrbot_plugin_gifcaijian |
@@ -92,6 +92,8 @@ pip install -r requirements.txt
 |---|---|
 | `图片转线稿` | 素描线稿 |
 | `表情包做旧 [次数]` | 电子包浆（1~50，建议 1~20） |
+| `左对称` / `右对称` / `上对称` / `下对称` | 半边镜像（支持静图与 GIF） |
+| `反色` | 颜色反转（保留透明通道） |
 
 ---
 
@@ -112,6 +114,14 @@ pip install -r requirements.txt
 | `max_concurrent_tasks` | 2 | 并发任务上限 |
 | `task_timeout_sec` | 120 | 单任务超时（秒） |
 | `max_queue_waiting` | 8 | 排队上限 |
+| `max_image_size_mb` | 15 | 普通图片体积上限 |
+| `max_gif_size_mb` | 20 | GIF 体积上限 |
+| `precheck_file_size_mb` | 100 | 打开前文件预检上限 |
+| `max_gif_frames` | 200 | 单 GIF 最大帧数 |
+| `max_gif_total_pixels` | 16000000 | GIF 总像素上限 |
+| `max_image_pixels` | 25000000 | 静图像素上限 |
+| `enable_auto_compress` | true | 自动压缩大图 |
+| `max_compress_dimension` | 2048 | 压缩最长边 |
 
 ---
 
@@ -149,10 +159,22 @@ astrbot_plugin_gifcaijian/
 
 ## 更新说明
 
+### v1.8.1
+
+- 新增 **GIF 安全上限**：最大帧数、总像素、单图像素
+- 新增 **处理前体积预检**：图片/GIF/视频分别限流，`max_video_size_mb` 实际生效
+- 新增 **自动压缩大图**：可配置最长边（默认 2048）
+- 新增模块 `core/safety.py` 统一安全校验
+
+### v1.8.0
+
+- 新增 `左对称` / `右对称` / `上对称` / `下对称` / `反色`（支持静图与 GIF，保留透明度）
+- 修复 `g加速` / `g减速` 透明 GIF 被写成黑底的问题
+- 真正移除测试指令 `g加速1` / `g加速2`，同步帮助与文档
+
 ### v1.7.3
 
 - 默认/最低 GIF 帧间隔改为 **20ms**
-- 移除测试指令 `g加速1` / `g加速2` 等
 - 命令注册统一无前导 `/`（由框架处理）
 
 ### v1.7.2
