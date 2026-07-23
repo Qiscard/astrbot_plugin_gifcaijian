@@ -231,7 +231,7 @@ class Processors:
             return f"逻辑异常: {e}", None
 
 
-    def process_speed(self, img_data: bytes, ratio: float):
+    def process_speed(self, img_data: bytes, ratio: float, min_frame_ms: int = 20):
         """按 ratio 改变播放速度（ratio<1 加速，ratio>1 减速）。
 
         QQ 客户端已知问题：
@@ -240,7 +240,7 @@ class Processors:
         - 末帧塞超长 duration 会在 QQ 里拖成慢动作。
 
         兼容策略：
-        - 输出每帧 delay >= 50ms，且为 10ms 整数倍；
+        - 输出每帧 delay >= 20ms（可配），且为 10ms 整数倍；
         - 以总时长 * ratio 为目标，加速优先均匀抽帧，减速只拉长间隔；
         - 时长在各帧间均匀分摊，禁止把残余全堆到末帧；
         - RGB 帧 + disposal=2 + optimize=False，避免二次编码串帧。
@@ -254,7 +254,15 @@ class Processors:
             if ratio <= 0:
                 return "❌ 变速倍率无效", None
 
-            MIN_MS = 50   # QQ 较稳的最小帧间隔
+            # min_frame_ms: 输出最小帧间隔（默认 20ms）；对齐到 10ms 网格，至少 10ms
+            try:
+                MIN_MS = int(min_frame_ms)
+            except (TypeError, ValueError):
+                MIN_MS = 20
+            MIN_MS = max(10, min(MIN_MS, 1000))
+            MIN_MS = int(round(MIN_MS / 10.0)) * 10
+            if MIN_MS < 10:
+                MIN_MS = 10
             GRID = 10     # GIF 原生 1/100s
 
             default_dur = int(img.info.get("duration", 100) or 100)
@@ -403,13 +411,13 @@ class Processors:
             speed_x = total_in / total_out if total_out > 0 else 0.0
             note = ""
             if out_n != n:
-                note = f"\n抽帧: {n} → {out_n}（QQ兼容最小间隔{MIN_MS}ms）"
+                note = f"\n抽帧: {n} → {out_n}（最小间隔{MIN_MS}ms）"
             msg = (
                 f"✅ 变速完成\n"
                 f"帧数: {n} → {out_n} | "
                 f"总时长: {total_in/1000.0:.2f}s → {total_out/1000.0:.2f}s\n"
                 f"平均帧间隔: {avg_in:.0f}ms → {avg_out:.0f}ms\n"
-                f"等效FPS: {fps_in:.2f} → {fps_out:.2f} | 实际约 {speed_x:.2f}x"
+                f"等效FPS: {fps_in:.2f} → {fps_out:.2f} | 实际约 {speed_x:.2f}x | 最小间隔{MIN_MS}ms"
                 f"{note}"
             )
             return msg, output

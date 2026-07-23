@@ -28,7 +28,7 @@ from .core.media_io import MediaHelper
 from .core.processors import Processors
 from .core.task_queue import TaskQueue
 
-PLUGIN_VERSION = "1.7.2"
+PLUGIN_VERSION = "1.7.3"
 ORIGINAL_AUTHOR = "shskjw"
 CURRENT_AUTHOR = "Qiscard"
 REPO_URL = "https://github.com/Qiscard/astrbot_plugin_gifcaijian"
@@ -135,7 +135,7 @@ class SpriteToGifPlugin(Star):
 
 ━━━ 🎬 动图 ━━━
 • 视频转gif [开始/时长/fps/缩放]
-• /g加速 [倍数]  /  /g减速 [倍数]
+• g加速 [倍数]  /  g减速 [倍数]
 • gif分解
 • 合成gif / 合成1gif / 合成2gif [行]x[列] [间隔] [边距]
 • 多图合成gif [帧间隔秒]
@@ -505,18 +505,34 @@ max_concurrent_tasks={self.cfg.max_concurrent_tasks} task_timeout_sec={self.cfg.
         async for r in self._handle_gif_task(event, 2):
             yield r
 
-    async def _change_speed_impl(self, event: AstrMessageEvent, is_accelerate: bool, factor: float = 2.0):
+    async def _change_speed_impl(
+        self,
+        event: AstrMessageEvent,
+        is_accelerate: bool,
+        factor: float = 2.0,
+        min_frame_ms: int = 20,
+    ):
         factor = max(0.1, min(float(factor), 20.0))
         ratio = (1.0 / factor) if is_accelerate else factor
         action = "加速" if is_accelerate else "减速"
-        yield event.plain_result(f"⏳ GIF{action} {factor}x ...")
+        try:
+            min_ms = max(10, min(int(min_frame_ms), 1000))
+        except (TypeError, ValueError):
+            min_ms = 20
+        min_ms = int(round(min_ms / 10.0)) * 10 or 10
+        yield event.plain_result(f"⏳ GIF{action} {factor}x (最小间隔{min_ms}ms) ...")
         try:
             img_data = await self._run_task("download_image", lambda: self.media._resolve_image_bytes(event), timeout=60)
             if not img_data:
                 yield event.plain_result("❌ 图片下载失败")
                 return
             res_msg, gif_bytes = await self._run_cpu(
-                f"gif_{action}", self.proc.process_speed, img_data, ratio, timeout=60
+                f"gif_{action}_{min_ms}ms",
+                self.proc.process_speed,
+                img_data,
+                ratio,
+                min_ms,
+                timeout=60,
             )
         except Exception as e:
             yield event.plain_result(f"❌ {e}")
@@ -528,27 +544,20 @@ max_concurrent_tasks={self.cfg.max_concurrent_tasks} task_timeout_sec={self.cfg.
         else:
             yield event.plain_result(res_msg)
 
-    @filter.command("/g加速")
-    async def accelerate_gif(self, event: AstrMessageEvent, factor: float = 2.0):
-        async for r in self._change_speed_impl(event, True, factor):
-            yield r
-
-    @filter.command("/g减速")
-    async def decelerate_gif(self, event: AstrMessageEvent, factor: float = 2.0):
-        async for r in self._change_speed_impl(event, False, factor):
-            yield r
 
     @filter.command("g加速")
-    async def accelerate_gif_alias(self, event: AstrMessageEvent, factor: float = 2.0):
-        """兼容无斜杠写法。"""
+    async def accelerate_gif(self, event: AstrMessageEvent, factor: float = 2.0):
+        """GIF 加速（默认最小帧间隔 20ms）。"""
         async for r in self._change_speed_impl(event, True, factor):
             yield r
 
     @filter.command("g减速")
-    async def decelerate_gif_alias(self, event: AstrMessageEvent, factor: float = 2.0):
-        """兼容无斜杠写法。"""
+    async def decelerate_gif(self, event: AstrMessageEvent, factor: float = 2.0):
+        """GIF 减速。"""
         async for r in self._change_speed_impl(event, False, factor):
             yield r
+
+
     @filter.command("gif分解")
     async def decompose_gif(self, event: AstrMessageEvent):
         yield event.plain_result("⏳ GIF分解中...")
